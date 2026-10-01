@@ -1,3 +1,5 @@
+import time
+
 from colorama import Fore
 from dotenv import load_dotenv
 from groq import Groq
@@ -8,6 +10,8 @@ from agentic_patterns.utils.completions import FixedFirstChatHistory
 from agentic_patterns.utils.completions import update_chat_history
 from agentic_patterns.utils.logging import fancy_step_tracker
 
+GROQ_MODEL = "openai/gpt-oss-120b"
+
 load_dotenv()
 
 
@@ -15,12 +19,21 @@ BASE_GENERATION_SYSTEM_PROMPT = """
 Your task is to Generate the best content possible for the user's request.
 If the user provides critique, respond with a revised version of your previous attempt.
 You must always output the revised content.
+
+Be concise and direct: remove filler, pleasantries, repetition, and unnecessary explanations,
+but preserve technical accuracy, context, warnings, code, commands, errors,
+and all steps required to complete the task.
 """
 
 BASE_REFLECTION_SYSTEM_PROMPT = """
 You are tasked with generating critique and recommendations to the user's generated content.
 If the user content has something wrong or something to be improved, output a list of recommendations
 and critiques. If the user content is ok and there's nothing to change, output this: <OK>
+
+
+Be concise and direct: remove filler, pleasantries, repetition, and unnecessary explanations,
+but preserve technical accuracy, context, warnings, code, commands, errors,
+and all steps required to complete the task.
 """
 
 
@@ -35,7 +48,7 @@ class ReflectionAgent:
         client (Groq): An instance of the Groq client to interact with the language model.
     """
 
-    def __init__(self, model: str = "llama-3.3-70b-versatile"):
+    def __init__(self, model: str = GROQ_MODEL):
         self.client = Groq()
         self.model = model
 
@@ -156,8 +169,9 @@ class ReflectionAgent:
                     "\n\nStop Sequence found. Stopping the reflection loop ... \n\n",
                 )
                 break
-
+            
             update_chat_history(generation_history, critique, "user")
             update_chat_history(reflection_history, critique, "assistant")
+            time.sleep(60)
 
         return generation
