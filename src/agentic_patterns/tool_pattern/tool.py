@@ -1,3 +1,4 @@
+import inspect
 import json
 from typing import Callable
 
@@ -15,7 +16,7 @@ def get_fn_signature(fn: Callable) -> dict:
     """
     fn_signature: dict = {
         "name": fn.__name__,
-        "description": fn.__doc__,
+        "description": inspect.getdoc(fn),
         "parameters": {"properties": {}},
     }
     schema = {
@@ -47,7 +48,9 @@ def validate_arguments(tool_call: dict, tool_signature: dict) -> dict:
     }
 
     for arg_name, arg_value in tool_call["arguments"].items():
-        expected_type = properties[arg_name].get("type")
+        expected_type = properties.get(arg_name, {}).get("type")
+        if expected_type not in type_mapping:
+            continue
 
         if not isinstance(arg_value, type_mapping[expected_type]):
             tool_call["arguments"][arg_name] = type_mapping[expected_type](arg_value)
@@ -97,10 +100,11 @@ def tool(fn: Callable):
         Tool: A Tool object containing the function, its name, and its signature.
     """
 
-    def wrapper():
-        fn_signature = get_fn_signature(fn)
-        return Tool(
-            name=fn_signature.get("name"), fn=fn, fn_signature=json.dumps(fn_signature)
+    fn_signature = get_fn_signature(fn)
+    
+    return Tool(
+            name = fn_signature.get("name"),
+            fn = fn,
+            fn_signature = json.dumps(fn_signature)
         )
 
-    return wrapper()

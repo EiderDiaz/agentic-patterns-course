@@ -1,4 +1,4 @@
-def completions_create(client, messages: list, model: str) -> str:
+def completions_create(client, messages: list, model: str, **kwargs) -> str:
     """
     Sends a request to the client's `completions.create` method to interact with the language model.
 
@@ -6,11 +6,12 @@ def completions_create(client, messages: list, model: str) -> str:
         client (Groq): The Groq client object
         messages (list[dict]): A list of message objects containing chat history for the model.
         model (str): The model to use for generating tool calls and responses.
+        **kwargs: Extra parameters for the API call (e.g. max_tokens).
 
     Returns:
         str: The content of the model's response.
     """
-    response = client.chat.completions.create(messages=messages, model=model)
+    response = client.chat.completions.create(messages=messages, model=model, **kwargs)
     return str(response.choices[0].message.content)
 
 
@@ -43,6 +44,7 @@ def update_chat_history(history: list, msg: str, role: str):
 
 
 class ChatHistory(list):
+    
     def __init__(self, messages: list | None = None, total_length: int = -1):
         """Initialise the queue with a fixed total length.
 

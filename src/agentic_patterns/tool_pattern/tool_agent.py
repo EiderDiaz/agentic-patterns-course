@@ -7,10 +7,12 @@ from groq import Groq
 
 from agentic_patterns.tool_pattern.tool import Tool
 from agentic_patterns.tool_pattern.tool import validate_arguments
+
 from agentic_patterns.utils.completions import build_prompt_structure
 from agentic_patterns.utils.completions import ChatHistory
 from agentic_patterns.utils.completions import completions_create
 from agentic_patterns.utils.completions import update_chat_history
+
 from agentic_patterns.utils.extraction import extract_tag_content
 
 load_dotenv()
@@ -20,6 +22,8 @@ TOOL_SYSTEM_PROMPT = """
 You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags.
 You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug
 into functions. Pay special attention to the properties 'types'. You should use those types as in a Python dict.
+Only call a function if it is needed to answer the user query. If none of the tools are relevant, do not output any
+<tool_call> tags and just answer the user directly.
 For each function call return a json object with function name and arguments within <tool_call></tool_call>
 XML tags as follows:
 
@@ -44,6 +48,7 @@ class ToolAgent:
     Attributes:
         tools (Tool | list[Tool]): A list of tools available to the agent.
         model (str): The model to be used for generating tool calls and responses.
+        max_tokens (int): Maximum number of output tokens per LLM call.
         client (Groq): The Groq client used to interact with the language model.
         tools_dict (dict): A dictionary mapping tool names to their corresponding Tool objects.
     """
@@ -51,10 +56,13 @@ class ToolAgent:
     def __init__(
         self,
         tools: Tool | list[Tool],
-        model: str = "llama-3.3-70b-versatile",
-    ) -> None:
+        model: str = "qwen/qwen3.8-27b",
+        max_tokens: int = 800,) -> None:
+
         self.client = Groq()
         self.model = model
+        # Groq free tier caps qwen output at 1000 tokens/minute
+        self.max_tokens = max_tokens
         self.tools = tools if isinstance(tools, list) else [tools]
         self.tools_dict = {tool.name: tool for tool in self.tools}
 
@@ -65,7 +73,7 @@ class ToolAgent:
         Returns:
             str: A concatenated string of all tool function signatures in JSON format.
         """
-        return "".join([tool.fn_signature for tool in self.tools])
+        return "\n".join([tool.fn_signature for tool in self.tools])
 
     def process_tool_calls(self, tool_calls_content: list) -> dict:
         """
@@ -81,7 +89,10 @@ class ToolAgent:
         for tool_call_str in tool_calls_content:
             tool_call = json.loads(tool_call_str)
             tool_name = tool_call["name"]
-            tool = self.tools_dict[tool_name]
+            tool = self.tools_dict.get(tool_name)
+            if tool is None:
+                print(Fore.RED + f"\nUnknown tool requested: {tool_name}")
+                continue
 
             print(Fore.GREEN + f"\nUsing Tool: {tool_name}")
 
@@ -94,17 +105,18 @@ class ToolAgent:
             result = tool.run(**validated_tool_call["arguments"])
             print(Fore.GREEN + f"\nTool result: \n{result}")
 
-            # Store the result using the tool call ID
-            observations[validated_tool_call["id"]] = result
+            # Store the result using the tool call ID (fallback to the tool name if the model omits it)
+            observations[validated_tool_call.get("id", tool_name)] = result
 
         return observations
 
     def run(
         self,
-        user_msg: str,
-    ) -> str:
+        user_msg: str,) -> str:
         """
-        Handles the full process of interacting with the language model and executing a tool based on user input.
+        Handles:
+        1. the full process of interacting with the language model (build the prompt)
+        2. executing a tool based on user input.
 
         Args:
             user_msg (str): The user's message that prompts the tool agent to act.
@@ -117,23 +129,25 @@ class ToolAgent:
         tool_chat_history = ChatHistory(
             [
                 build_prompt_structure(
-                    prompt=TOOL_SYSTEM_PROMPT % self.add_tool_signatures(),
-                    role="system",
-                ),
+                    prompt=TOOL_SYSTEM_PROMPT % self.add_tool_signatures(), # %s le deja inyectar directamente despues al prompt: promt % text
+                    role="system"),
                 user_prompt,
             ]
         )
         agent_chat_history = ChatHistory([user_prompt])
-
-        tool_call_response = completions_create(
-            self.client, messages=tool_chat_history, model=self.model
-        )
+        # helper para hacer la llamada a la api de groq y obtener el contenido de la respuesta
+        tool_call_response = completions_create(self.client,
+                                                messages=tool_chat_history,
+                                                model=self.model,
+                                                max_tokens=self.max_tokens)
         tool_calls = extract_tag_content(str(tool_call_response), "tool_call")
 
         if tool_calls.found:
             observations = self.process_tool_calls(tool_calls.content)
             update_chat_history(
-                agent_chat_history, f'f"Observation: {observations}"', "user"
+                agent_chat_history, f"Observation: {observations}", "user"
             )
 
-        return completions_create(self.client, agent_chat_history, self.model)
+        return completions_create(
+            self.client, agent_chat_history, self.model, max_tokens=self.max_tokens
+        )
